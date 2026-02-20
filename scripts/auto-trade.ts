@@ -332,18 +332,28 @@ async function executeMarketMaker(
     ? Math.round((strategy.fiat_amount / btcPrice) * 1e8)
     : strategy.fiat_amount * 1000; // fallback
 
-  // Check per-trade limit (each order individually)
-  if (estimatedSats > config.limits.max_trade_amount_sats) {
-    console.log(`🚫 Single order (${estimatedSats} sats) exceeds per-trade limit (${config.limits.max_trade_amount_sats} sats)`);
+  // Full limit check for first order (covers per-trade, daily volume, trade count, cooldown)
+  const firstCheck = checkLimits(config.limits, estimatedSats);
+  if (!firstCheck.allowed) {
+    console.log(`🚫 First order blocked: ${firstCheck.reason}`);
     return;
   }
 
-  // Check daily volume limit (both orders combined)
+  // Additional checks for second order
   const state = loadState();
   const today = todayKey();
+
+  // Check that both orders combined fit within daily volume
   const todayVolume = state.daily_volume[today] ?? 0;
   if (todayVolume + estimatedSats * 2 > config.limits.max_daily_volume_sats) {
     console.log(`🚫 Would exceed daily limit: ${todayVolume + estimatedSats * 2} > ${config.limits.max_daily_volume_sats} sats`);
+    return;
+  }
+
+  // Verify trade count has room for 2 trades
+  const todayTrades = state.daily_trades[today] ?? 0;
+  if (todayTrades + 2 > config.limits.max_trades_per_day) {
+    console.log(`🚫 Not enough trade slots: ${todayTrades}+2 > ${config.limits.max_trades_per_day}`);
     return;
   }
 
